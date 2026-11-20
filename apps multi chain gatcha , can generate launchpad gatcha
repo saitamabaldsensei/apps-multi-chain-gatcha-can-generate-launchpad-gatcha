@@ -1,0 +1,155 @@
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+contract GachaCampaign {
+    address public creator;
+    string public campaignName;
+    uint256 public nonce;
+    bool public active = true;
+
+    struct Reward {
+        uint256 rewardId;
+        uint256 weight;
+        uint256 remaining;
+    }
+
+    Reward[] public rewards;
+
+    mapping(address => bool) public hasDrawn;
+
+    event RewardAdded(uint256 rewardId, uint256 weight);
+    event GachaOpened(address indexed user, uint256 rewardId);
+
+    modifier onlyCreator() {
+        require(msg.sender == creator, "Not creator");
+        _;
+    }
+
+    constructor(string memory _name, address _creator) {
+        campaignName = _name;
+        creator = _creator;
+    }
+
+    function addReward(
+        uint256 _id,
+        uint256 _weight,
+        uint256 _supply
+    ) external onlyCreator {
+        require(!hasAnyDrawn(), "Already started");
+        require(_weight > 0 && _supply > 0, "Invalid reward");
+
+        rewards.push(Reward(_id, _weight, _supply));
+
+        emit RewardAdded(_id, _weight);
+    }
+
+    function hasAnyDrawn() public view returns (bool) {
+        return nonce > 0;
+    }
+
+    function openGacha() external returns (uint256) {
+        require(active, "Campaign inactive");
+        require(!hasDrawn[msg.sender], "Already drawn");
+        require(rewards.length > 0, "No rewards");
+
+        uint256 totalWeight;
+
+        for (uint256 i = 0; i < rewards.length; i++) {
+            if (rewards[i].remaining > 0) {
+                totalWeight += rewards[i].weight;
+            }
+        }
+
+        require(totalWeight > 0, "Sold out");
+
+        // DEMO randomness only; not secure for production.
+        uint256 randomNumber = uint256(
+            keccak256(
+                abi.encodePacked(
+                    block.prevrandao,
+                    blockhash(block.number - 1),
+                    msg.sender,
+                    nonce
+                )
+            )
+        ) % totalWeight;
+
+        uint256 selectedId;
+
+        for (uint256 i = 0; i < rewards.length; i++) {
+            if (rewards[i].remaining == 0) continue;
+
+            if (randomNumber < rewards[i].weight) {
+                rewards[i].remaining--;
+                selectedId = rewards[i].rewardId;
+                break;
+            }
+
+            randomNumber -= rewards[i].weight;
+        }
+
+        hasDrawn[msg.sender] = true;
+        nonce++;
+
+        emit GachaOpened(msg.sender, selectedId);
+
+        return selectedId;
+    }
+
+    function setActive(bool _active) external onlyCreator {
+        active = _active;
+    }
+
+    function getRewards()
+        external
+        view
+        returns (Reward[] memory)
+    {
+        return rewards;
+    }
+}
+
+contract GachaFactory {
+    address[] public campaigns;
+
+    event CampaignCreated(
+        address indexed creator,
+        address campaign,
+        string name
+    );
+
+    function createCampaign(
+        string calldata _name
+    ) external returns (address) {
+
+        GachaCampaign campaign = new GachaCampaign(
+            _name,
+            msg.sender
+        );
+
+        address campaignAddress = address(campaign);
+
+        campaigns.push(campaignAddress);
+
+        emit CampaignCreated(
+            msg.sender,
+            campaignAddress,
+            _name
+        );
+
+        return campaignAddress;
+    }
+
+    function totalCampaigns() external view returns (uint256) {
+        return campaigns.length;
+    }
+
+    function getCampaigns()
+        external
+        view
+        returns (address[] memory)
+    {
+        return campaigns;
+    }
+}
